@@ -662,7 +662,7 @@ impl TransparentInput {
             }
         } else {
             // For scriptSig, we pass `true` since there may be signatures
-            let asm = Code(script_bytes.to_vec()).to_asm(true);
+            let asm = to_zcashd_asm(&Code(script_bytes.to_vec()).to_asm(true));
 
             Self {
                 coinbase: None,
@@ -683,7 +683,7 @@ impl TransparentOutput {
         let script_bytes = &tx_out.script_pubkey().0.0;
 
         // For scriptPubKey, we pass `false` since there are no signatures
-        let asm = Code(script_bytes.to_vec()).to_asm(false);
+        let asm = to_zcashd_asm(&Code(script_bytes.to_vec()).to_asm(false));
 
         // Detect the script type using zcash_script's solver.
         let (kind, req_sigs) = detect_script_type(script_bytes);
@@ -790,6 +790,36 @@ impl OrchardAction {
             spend_auth_sig: hex::encode(<[u8; 64]>::from(action.authorization())),
         }
     }
+}
+
+/// Converts zcash_script asm output to zcashd-compatible format.
+///
+/// The zcash_script crate outputs "OP_1" through "OP_16" and "OP_1NEGATE",
+/// but zcashd outputs "1" through "16" and "-1" respectively.
+fn to_zcashd_asm(asm: &str) -> String {
+    asm.split(' ')
+        .map(|token| match token {
+            "OP_1NEGATE" => "-1",
+            "OP_1" => "1",
+            "OP_2" => "2",
+            "OP_3" => "3",
+            "OP_4" => "4",
+            "OP_5" => "5",
+            "OP_6" => "6",
+            "OP_7" => "7",
+            "OP_8" => "8",
+            "OP_9" => "9",
+            "OP_10" => "10",
+            "OP_11" => "11",
+            "OP_12" => "12",
+            "OP_13" => "13",
+            "OP_14" => "14",
+            "OP_15" => "15",
+            "OP_16" => "16",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Detects the script type and required signatures from a scriptPubKey.
@@ -969,5 +999,37 @@ mod tests {
                 asm
             );
         }
+    }
+
+    /// Test that numeric opcodes are formatted as zcashd expects.
+    ///
+    /// Test vectors from zcashd `qa/rpc-tests/decodescript.py:54,82`.
+    #[test]
+    fn asm_numeric_opcodes_match_zcashd() {
+        // From decodescript.py:54 - script '5100' (OP_1 OP_0) should produce '1 0'
+        let script = hex::decode("5100").unwrap();
+        let asm = to_zcashd_asm(&Code(script).to_asm(false));
+        assert_eq!(asm, "1 0");
+
+        // OP_1NEGATE (0x4f) should produce '-1'
+        let script = hex::decode("4f").unwrap();
+        let asm = to_zcashd_asm(&Code(script).to_asm(false));
+        assert_eq!(asm, "-1");
+
+        // From decodescript.py:82 - 2-of-3 multisig pattern should use '2' and '3'
+        // Script: OP_2 <pubkey> <pubkey> <pubkey> OP_3 OP_CHECKMULTISIG
+        let public_key = "03b0da749730dc9b4b1f4a14d6902877a92541f5368778853d9c4a0cb7802dcfb2";
+        let push_public_key = format!("21{}", public_key);
+        let script_hex = format!(
+            "52{}{}{}53ae",
+            push_public_key, push_public_key, push_public_key
+        );
+        let script = hex::decode(&script_hex).unwrap();
+        let asm = to_zcashd_asm(&Code(script).to_asm(false));
+        let expected = format!(
+            "2 {} {} {} 3 OP_CHECKMULTISIG",
+            public_key, public_key, public_key
+        );
+        assert_eq!(asm, expected);
     }
 }
