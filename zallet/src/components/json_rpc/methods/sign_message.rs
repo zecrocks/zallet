@@ -15,6 +15,45 @@ use zcash_keys::encoding::AddressCodec;
 use super::verify_message;
 use crate::components::{database::DbConnection, json_rpc::server::LegacyCode, keystore::KeyStore};
 
+/// Response to a `signmessage` RPC request.
+pub(crate) type Response = RpcResult<ResultType>;
+
+/// The result of signing a message.
+#[derive(Clone, Debug, Serialize, Documented, JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct ResultType(String);
+
+// Re-export parameter descriptions from verify_message for OpenRPC generation.
+pub(super) use super::verify_message::{PARAM_MESSAGE_DESC, PARAM_ZCASHADDRESS_DESC};
+
+/// Signs a message with the private key of a transparent address.
+///
+/// # Arguments
+/// - `wallet`: The wallet database connection.
+/// - `keystore`: The keystore for decrypting private keys.
+/// - `zcashaddress`: The zcash transparent address to use for signing.
+/// - `message`: The message to sign.
+pub(crate) async fn call(
+    wallet: &DbConnection,
+    keystore: &KeyStore,
+    zcashaddress: &str,
+    message: &str,
+) -> Response {
+    let transparent_addr =
+        TransparentAddress::decode(wallet.params(), zcashaddress).map_err(|_| {
+            LegacyCode::InvalidAddressOrKey.with_static("Invalid Zcash transparent address")
+        })?;
+
+    if matches!(transparent_addr, TransparentAddress::ScriptHash(_)) {
+        return Err(LegacyCode::Type.with_static("Address does not refer to key"));
+    }
+
+    let secret_key = get_transparent_secret_key(wallet, keystore, &transparent_addr).await?;
+
+    let signature_b64 = sign_message_with_key(&secret_key, message);
+    Ok(ResultType(signature_b64))
+}
+
 /// Retrieves the private key for a transparent address known to the wallet.
 async fn get_transparent_secret_key(
     wallet: &DbConnection,
@@ -108,45 +147,6 @@ fn sign_message_with_key(secret_key: &secp256k1::SecretKey, message: &str) -> St
     signature[1..65].copy_from_slice(&sig_bytes);
 
     Base64::encode_string(&signature)
-}
-
-// Re-export parameter descriptions from verify_message for OpenRPC generation.
-pub(super) use super::verify_message::{PARAM_MESSAGE_DESC, PARAM_ZCASHADDRESS_DESC};
-
-/// Response to a `signmessage` RPC request.
-pub(crate) type Response = RpcResult<ResultType>;
-
-/// The result of signing a message.
-#[derive(Clone, Debug, Serialize, Documented, JsonSchema)]
-#[serde(transparent)]
-pub(crate) struct ResultType(String);
-
-/// Signs a message with the private key of a transparent address.
-///
-/// # Arguments
-/// - `wallet`: The wallet database connection.
-/// - `keystore`: The keystore for decrypting private keys.
-/// - `zcashaddress`: The zcash transparent address to use for signing.
-/// - `message`: The message to sign.
-pub(crate) async fn call(
-    wallet: &DbConnection,
-    keystore: &KeyStore,
-    zcashaddress: &str,
-    message: &str,
-) -> Response {
-    let transparent_addr =
-        TransparentAddress::decode(wallet.params(), zcashaddress).map_err(|_| {
-            LegacyCode::InvalidAddressOrKey.with_static("Invalid Zcash transparent address")
-        })?;
-
-    if matches!(transparent_addr, TransparentAddress::ScriptHash(_)) {
-        return Err(LegacyCode::Type.with_static("Address does not refer to key"));
-    }
-
-    let secret_key = get_transparent_secret_key(wallet, keystore, &transparent_addr).await?;
-
-    let signature_b64 = sign_message_with_key(&secret_key, message);
-    Ok(ResultType(signature_b64))
 }
 
 #[cfg(test)]
