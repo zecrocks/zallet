@@ -30,27 +30,6 @@ pub(super) const PARAM_SIGNATURE_DESC: &str =
     "The signature provided by the signer in base64 encoding.";
 pub(super) const PARAM_MESSAGE_DESC: &str = "The message that was signed.";
 
-/// Creates the message hash for signature verification.
-///
-/// This matches zcashd's `src/rpc/misc.cpp:493-495`.
-///
-/// Each string is prefixed with CompactSize length, then the result is double SHA-256 hashed.
-fn message_hash(message: &str) -> [u8; 32] {
-    let mut writer = HashWriter::default();
-
-    CompactSize::write(&mut writer, MESSAGE_MAGIC.len()).expect("write to HashWriter");
-    writer
-        .write_all(MESSAGE_MAGIC.as_bytes())
-        .expect("write to HashWriter");
-
-    CompactSize::write(&mut writer, message.len()).expect("write to HashWriter");
-    writer
-        .write_all(message.as_bytes())
-        .expect("write to HashWriter");
-
-    writer.into_hash().into()
-}
-
 /// Verifies a message signed with a transparent Zcash address.
 ///
 /// # Arguments
@@ -117,6 +96,27 @@ pub(crate) fn call(
 
     let recovered_addr = TransparentAddress::from_pubkey(&recovered_pubkey);
     Ok(ResultType(recovered_addr == transparent_addr))
+}
+
+/// Creates the message hash for signature verification.
+///
+/// This matches zcashd's `src/rpc/misc.cpp:493-495`.
+///
+/// Each string is prefixed with CompactSize length, then the result is double SHA-256 hashed.
+fn message_hash(message: &str) -> [u8; 32] {
+    let mut writer = HashWriter::default();
+
+    CompactSize::write(&mut writer, MESSAGE_MAGIC.len()).expect("write to HashWriter");
+    writer
+        .write_all(MESSAGE_MAGIC.as_bytes())
+        .expect("write to HashWriter");
+
+    CompactSize::write(&mut writer, message.len()).expect("write to HashWriter");
+    writer
+        .write_all(message.as_bytes())
+        .expect("write to HashWriter");
+
+    writer.into_hash().into()
 }
 
 #[cfg(test)]
